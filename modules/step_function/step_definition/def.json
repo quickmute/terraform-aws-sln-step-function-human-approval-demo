@@ -1,0 +1,87 @@
+{
+    "StartAt": "Lambda Callback",
+    "TimeoutSeconds": 3600,
+    "States": {
+      "Lambda Callback": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+        "Parameters": {
+          "FunctionName": "${send_approval_lambda_arn}",
+          "Payload": {
+            "ExecutionContext.$": "$$",
+            "APIGatewayEndpoint": "${apigw_endpoint}"
+          }
+        },
+        "Next": "ManualApprovalChoiceState"
+      },
+      "ManualApprovalChoiceState": {
+        "Type": "Choice",
+        "Choices": [
+          {
+            "Variable": "$.Status",
+            "StringEquals": "Approved!",
+            "Next": "ApprovedPassState"
+          },
+          {
+            "Variable": "$.Status",
+            "StringEquals": "Rejected!",
+            "Next": "RejectedPassState"
+          }
+        ]
+      },
+      "ApprovedPassState": {
+        "Type": "Pass",
+        "Next": "Lambda Invoke",
+        "ResultPath": null
+      },
+      "Lambda Invoke": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "Parameters": {
+          "Payload.$": "$",
+          "FunctionName": "${response_action_lambda_arn}"
+        },
+        "Retry": [
+          {
+            "ErrorEquals": [
+              "Lambda.ServiceException",
+              "Lambda.AWSLambdaException",
+              "Lambda.SdkClientException",
+              "Lambda.TooManyRequestsException"
+            ],
+            "IntervalSeconds": 1,
+            "MaxAttempts": 3,
+            "BackoffRate": 2
+          }
+        ],
+        "ResultSelector": {
+          "InputPayLoad.$": "$.Payload.OutputPayLoad"
+        },
+        "Next": "PutItem After Action"
+      },
+      "PutItem After Action": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::dynamodb:putItem",
+        "Parameters": {
+          "TableName": "${dynamodb_log_table_name}",
+          "Item": {
+            "PK": {
+              "S.$": "$.InputPayLoad.pk"
+            },
+            "SK": {
+              "S.$": "$.InputPayLoad.sk"
+            },
+            "Status": {
+              "S": "Updated"
+            }
+          }
+        },
+        "End": true
+      },
+      "RejectedPassState": {
+        "Type": "Pass",
+        "End": true,
+        "ResultPath": null
+      }
+    }
+  }
